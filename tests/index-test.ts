@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { Application } from 'spectron';
 import { getAppUsage } from '../src';
 import { resolve } from 'path';
+import type { ProcessMetric } from "electron";
 
 describe('Application launch', function() {
   this.timeout(10000);
@@ -24,7 +25,8 @@ describe('Application launch', function() {
   });
 
   it('ensures that extracted pids are the same as those of getAppMetrics', async () => {
-    const metrics = await app.electron.remote.app.getAppMetrics();
+    //eslint-disable-next-line
+    const metrics: ProcessMetric[] = await app.electron.remote.app.getAppMetrics();
     const electronPids = new Set(metrics.map(m => m.pid));
     // Spectron TS definition is 🤢
     const mainPid: number = await (app.mainProcess.pid as any)();

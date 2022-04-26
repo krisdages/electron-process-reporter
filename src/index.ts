@@ -4,7 +4,7 @@ import * as memoize from 'memoizee';
 import * as pidtree from 'pidtree';
 // @ts-ignore: no declaration file
 import * as pidusage from 'pidusage';
-import { Observable } from 'rxjs';
+import { Observable, from, timer, mergeMap, bufferCount, groupBy, map, filter, share } from 'rxjs';
 
 import extractURLDomain from './extractURLDomain';
 
@@ -30,17 +30,18 @@ export const getAppUsage = (pid: number): Promise<PidUsage[]> => {
 };
 
 let getSharedProcessMetricsPollerByPid = (pid: number, samplingInterval: number) =>
-  Observable.timer(0, samplingInterval)
-    .map(() => Observable.fromPromise(getAppUsage(pid)))
-    .mergeAll()
-    .share();
+  timer(0, samplingInterval).pipe(
+    mergeMap(() => from(getAppUsage(pid))),
+    share()
+  );
 
 getSharedProcessMetricsPollerByPid = memoize(getSharedProcessMetricsPollerByPid);
 
 let getSharedProcessMetricsPollerByApp = (app: Electron.App, samplingInterval: number) =>
-  Observable.timer(0, samplingInterval)
-    .map(() => app.getAppMetrics())
-    .share();
+  timer(0, samplingInterval).pipe(
+    map(() => app.getAppMetrics()),
+    share()
+  );
 
 getSharedProcessMetricsPollerByApp = memoize(getSharedProcessMetricsPollerByApp);
 
@@ -131,7 +132,7 @@ const getExtendedAppMetrics = (appMetrics: Electron.ProcessMetric[]) => {
  * @param options
  */
 export const onExtendedProcessMetrics = (app: Electron.App, options: OnProcessMetricsOptions = {}) =>
-  onProcessMetrics(app, options).map(getExtendedAppMetrics);
+  onProcessMetrics(app, options).pipe(map(getExtendedAppMetrics));
 
 export interface onExcessiveCPUUsageOptions extends OnProcessMetricsOptions {
   /**Number of samples to consider */
@@ -170,16 +171,17 @@ export const onExcessiveCPUUsageInProcessTree = (pid: number, options: onExcessi
     ...options,
   };
 
-  return onProcessTreeMetricsForPid(pid, options)
-    .map(appUsage => Observable.from(appUsage))
-    .mergeAll()
-    .groupBy(appUsage => appUsage.pid)
-    .map(g => g.bufferCount(options.samplesCount))
-    .mergeAll()
-    .filter(processMetricsSamples => {
+  const bufferOp = bufferCount(options.samplesCount) as <T>(obs: Observable<T>) => Observable<T[]>;
+
+  return onProcessTreeMetricsForPid(pid, options).pipe(
+    mergeMap(appUsage => from(appUsage)),
+    groupBy(appUsage => appUsage.pid),
+    mergeMap(g => g.pipe(bufferOp)),
+    filter(processMetricsSamples => {
       const excessiveSamplesCount = processMetricsSamples.filter(p => p.cpu >= options.percentCPUUsageThreshold).length;
       return excessiveSamplesCount === processMetricsSamples.length;
-    });
+    })
+  );
 };
 
 /**
@@ -200,16 +202,17 @@ export const onExcessiveCPUUsage = (app: Electron.App, options: onExcessiveCPUUs
     ...options,
   };
 
-  return onExtendedProcessMetrics(app, options)
-    .map(report => Observable.from(report))
-    .mergeAll()
-    .groupBy(processMetric => processMetric.pid)
-    .map(g => g.bufferCount(options.samplesCount))
-    .mergeAll()
-    .filter(processMetricsSamples => {
+  const bufferOp = bufferCount(options.samplesCount) as <T>(obs: Observable<T>) => Observable<T[]>;
+
+  return onExtendedProcessMetrics(app, options).pipe(
+    mergeMap(report => from(report)),
+    groupBy(processMetric => processMetric.pid),
+    mergeMap(g => g.pipe(bufferOp)),
+    filter(processMetricsSamples => {
       const excessiveSamplesCount = processMetricsSamples.filter(
         p => p.cpu.percentCPUUsage >= options.percentCPUUsageThreshold
       ).length;
       return excessiveSamplesCount == processMetricsSamples.length;
-    });
+    })
+  );
 };
